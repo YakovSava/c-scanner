@@ -1,0 +1,66 @@
+name: build-and-release
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*'
+  pull_request:
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up CMake
+        uses: lukka/get-cmake@v3.30.3
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: |
+          cmake --build build --config Release -j 4
+
+      - name: Package
+        shell: bash
+        run: |
+          set -e
+          APP_NAME=gitdump
+          case "${{ matrix.os }}" in
+            ubuntu-*)  BIN="build/${APP_NAME}"; PKG="${APP_NAME}-linux-x86_64.tar.gz"; tar -czf "$PKG" -C build "${APP_NAME}";;
+            macos-*)   BIN="build/${APP_NAME}"; PKG="${APP_NAME}-macos-universal.tar.gz"; tar -czf "$PKG" -C build "${APP_NAME}";;
+            windows-*) BIN="build/Release/${APP_NAME}.exe"; PKG="${APP_NAME}-windows-x86_64.zip"; 7z a "$PKG" "$BIN" > /dev/null;;
+          esac
+          echo "PACKAGE=$PKG" >> $GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE }}
+          path: ${{ env.PACKAGE }}
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Gather files
+        run: |
+          shopt -s globstar
+          mkdir -p upload
+          mv dist/**/** upload/ || true
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: upload/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
